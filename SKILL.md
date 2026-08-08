@@ -94,6 +94,8 @@ Throughout the workflow:
 
 ## Step 1 — Validate input
 
+Check [LEARNINGS.md](LEARNINGS.md) first for anything relevant to the source format(s) or genre involved in this run — don't rediscover an extraction quirk or a calibration issue already learned from a prior conversion.
+
 Verify that there is at least one supported file, directory, or glob pattern among the `INPUT_PATHS`.
 For directories and globs, expand them to find matching supported files (`.pdf`, `.epub`, `.docx`, `.txt`, `.md`, `.markdown`, `.rst`, `.adoc`, `.html`, `.htm`, `.rtf`, `.mobi`, `.azw`, `.azw3`).
 
@@ -550,6 +552,8 @@ shutil.rmtree(
 )
 PY
 ```
+
+If anything non-obvious came up during this run — an extraction quirk for this format/genre, a budget estimate that was off, a reason the scanner in Step 9.5 flagged something — add one short entry to [LEARNINGS.md](LEARNINGS.md) under the relevant topic before reporting. Skip silently if nothing non-obvious happened.
 
 Then report to the user:
 
