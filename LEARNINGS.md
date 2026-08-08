@@ -15,3 +15,13 @@ How this converter gets better with use instead of running the same way every ti
 ## general
 
 *(no entries yet — this fills in as the converter runs into real, non-obvious things worth remembering)*
+
+---
+
+## Usage Log
+
+The actual evidence trail. One line every time Step 1 checks this file:
+
+```
+- <date> — checked | hit: <which entry, what it saved> | miss: nothing relevant | empty: no entries yet
+```

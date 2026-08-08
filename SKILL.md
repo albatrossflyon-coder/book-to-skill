@@ -94,7 +94,7 @@ Throughout the workflow:
 
 ## Step 1 — Validate input
 
-Check [LEARNINGS.md](LEARNINGS.md) first for anything relevant to the source format(s) or genre involved in this run — don't rediscover an extraction quirk or a calibration issue already learned from a prior conversion.
+Check [LEARNINGS.md](LEARNINGS.md) first for anything relevant to the source format(s) or genre involved in this run — don't rediscover an extraction quirk or a calibration issue already learned from a prior conversion. Log the check in its Usage Log (hit/miss/empty).
 
 Verify that there is at least one supported file, directory, or glob pattern among the `INPUT_PATHS`.
 For directories and globs, expand them to find matching supported files (`.pdf`, `.epub`, `.docx`, `.txt`, `.md`, `.markdown`, `.rst`, `.adoc`, `.html`, `.htm`, `.rtf`, `.mobi`, `.azw`, `.azw3`).
