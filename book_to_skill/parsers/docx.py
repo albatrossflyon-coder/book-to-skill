@@ -6,6 +6,11 @@ from book_to_skill.exceptions import ExtractionError
 
 
 def extract_docx_with_python_docx(docx_path: str) -> str | None:
+    # Called unconditionally (not just via extract_docx()) so this function is
+    # self-defending even when invoked directly, matching
+    # extract_docx_with_zipfile(): raises ExtractionError on DOCTYPE/ENTITY
+    # declarations before python-docx ever opens the archive.
+    validate_docx_xml_safety(docx_path)
     try:
         import docx
         document = docx.Document(docx_path)
@@ -18,6 +23,8 @@ def extract_docx_with_python_docx(docx_path: str) -> str | None:
         return "\n".join(parts)
     except ImportError:
         return None
+    except ExtractionError:
+        raise
     except Exception as e:
         print(f"  [warn] extract_docx_with_python_docx failed: {type(e).__name__}: {e}", file=sys.stderr)
         return None
@@ -97,7 +104,10 @@ def validate_docx_xml_safety(docx_path: str) -> None:
 
 
 def extract_docx(docx_path: str) -> tuple[str, str]:
-    validate_docx_xml_safety(docx_path)
+    # Validation lives in each leaf parser (extract_docx_with_python_docx,
+    # extract_docx_with_zipfile) so it runs exactly once regardless of which
+    # parser actually handles the file, instead of once here plus again in
+    # whichever parser this falls through to.
     print("Trying python-docx...", end=" ", flush=True)
     text = extract_docx_with_python_docx(docx_path)
     if text and text.strip():
