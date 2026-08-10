@@ -1083,6 +1083,34 @@ class TestDocxExtraction:
         with pytest.raises(ExtractionError, match="Security validation failed"):
             extract_docx_with_zipfile(str(bad_docx))
 
+    def test_extract_docx_python_docx_xxe_rejection_direct_call(self, tmp_path):
+        """extract_docx_with_python_docx() must reject malicious XML even when
+        called directly, not just via the extract_docx() wrapper — mirrors the
+        zipfile-parser test above. Validation moved into each leaf parser (this
+        one included) so it runs exactly once regardless of entry point, instead
+        of only in extract_docx() plus again in whichever parser it reached."""
+        from book_to_skill.parsers.docx import extract_docx_with_python_docx
+
+        ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        xml = textwrap.dedent(f"""\
+            <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+            <!DOCTYPE w:document [
+              <!ENTITY xxe SYSTEM "file:///etc/passwd">
+            ]>
+            <w:document xmlns:w="{ns}">
+              <w:body>
+                <w:p><w:r><w:t>&xxe;</w:t></w:r></w:p>
+              </w:body>
+            </w:document>
+        """)
+        bad_docx = tmp_path / "malicious.docx"
+        with zipfile.ZipFile(bad_docx, "w") as zf:
+            zf.writestr("word/document.xml", xml)
+            zf.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+
+        with pytest.raises(ExtractionError, match="Security validation failed"):
+            extract_docx_with_python_docx(str(bad_docx))
+
     def test_extract_docx_xxe_rejection(self, tmp_path):
         """Verify that a DOCX with malicious DTD or entity declarations is rejected."""
         from book_to_skill.parsers.docx import extract_docx
