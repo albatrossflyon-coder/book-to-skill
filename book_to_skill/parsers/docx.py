@@ -7,12 +7,20 @@ from book_to_skill.exceptions import ExtractionError
 
 def extract_docx_with_python_docx(docx_path: str) -> str | None:
     # Called unconditionally (not just via extract_docx()) so this function is
-    # self-defending even when invoked directly, matching
-    # extract_docx_with_zipfile(): raises ExtractionError on DOCTYPE/ENTITY
-    # declarations before python-docx ever opens the archive.
-    validate_docx_xml_safety(docx_path)
+    # self-defending when invoked directly WITH python-docx installed:
+    # raises ExtractionError on DOCTYPE/ENTITY declarations before
+    # python-docx ever opens the archive. If python-docx is NOT installed,
+    # this returns None without validating at all -- a parser that isn't
+    # installed parses nothing, so skipping the scan gives up no safety
+    # (nothing gets extracted, malicious or not), and it avoids paying the
+    # full archive scan on every extract_docx() call in the (default,
+    # stdlib-only) case where this parser never even runs. A caller that
+    # invokes this function directly and needs a validation guarantee
+    # regardless of python-docx's availability should use
+    # extract_docx_with_zipfile() or call validate_docx_xml_safety() itself.
     try:
         import docx
+        validate_docx_xml_safety(docx_path)
         document = docx.Document(docx_path)
         parts = [paragraph.text for paragraph in document.paragraphs if paragraph.text]
         for table in document.tables:
@@ -24,6 +32,9 @@ def extract_docx_with_python_docx(docx_path: str) -> str | None:
     except ImportError:
         return None
     except ExtractionError:
+        # Without this, the broad `except Exception` below would catch an
+        # XXE rejection from validate_docx_xml_safety() too, turning a
+        # security refusal into a swallowed [warn] + None.
         raise
     except Exception as e:
         print(f"  [warn] extract_docx_with_python_docx failed: {type(e).__name__}: {e}", file=sys.stderr)

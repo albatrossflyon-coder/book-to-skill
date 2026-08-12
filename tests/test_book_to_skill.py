@@ -1086,9 +1086,12 @@ class TestDocxExtraction:
     def test_extract_docx_python_docx_xxe_rejection_direct_call(self, tmp_path):
         """extract_docx_with_python_docx() must reject malicious XML even when
         called directly, not just via the extract_docx() wrapper — mirrors the
-        zipfile-parser test above. Validation moved into each leaf parser (this
-        one included) so it runs exactly once regardless of entry point, instead
-        of only in extract_docx() plus again in whichever parser it reached."""
+        zipfile-parser test above. Validation now runs after `import docx`
+        succeeds (so an absent python-docx doesn't pay for a scan that never
+        protects anything -- see extract_docx_with_python_docx's docstring),
+        so `docx` is faked importable here to exercise the guard
+        deterministically regardless of whether python-docx is actually
+        installed in the environment running this test."""
         from book_to_skill.parsers.docx import extract_docx_with_python_docx
 
         ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -1108,8 +1111,31 @@ class TestDocxExtraction:
             zf.writestr("word/document.xml", xml)
             zf.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
 
-        with pytest.raises(ExtractionError, match="Security validation failed"):
-            extract_docx_with_python_docx(str(bad_docx))
+        with mock.patch.dict(sys.modules, {"docx": mock.MagicMock()}):
+            with pytest.raises(ExtractionError, match="Security validation failed"):
+                extract_docx_with_python_docx(str(bad_docx))
+
+    def test_extract_docx_python_docx_absent_skips_validation_without_raising(self, tmp_path):
+        """Companion to the test above: when python-docx genuinely isn't
+        importable, extract_docx_with_python_docx() must return None (not
+        raise, not scan the archive) -- it can't parse anything either way,
+        malicious or not, so there's no protection to buy by validating."""
+        from book_to_skill.parsers.docx import extract_docx_with_python_docx
+
+        real_import = __import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "docx":
+                raise ImportError("simulated: python-docx not installed")
+            return real_import(name, *args, **kwargs)
+
+        docx_path = tmp_path / "whatever.docx"
+        docx_path.write_bytes(b"not even a real docx")
+
+        with mock.patch("builtins.__import__", side_effect=fake_import):
+            result = extract_docx_with_python_docx(str(docx_path))
+
+        assert result is None
 
     def test_extract_docx_xxe_rejection(self, tmp_path):
         """Verify that a DOCX with malicious DTD or entity declarations is rejected."""
@@ -1135,6 +1161,37 @@ class TestDocxExtraction:
             
         with pytest.raises(ExtractionError, match="Security validation failed"):
             extract_docx(str(bad_docx))
+
+    def test_extract_docx_validates_once_when_python_docx_unavailable(self, tmp_path):
+        """Maintainer-requested regression test: validate_docx_xml_safety()
+        must run exactly once through extract_docx() when python-docx isn't
+        installed -- once for real in the zipfile fallback, not also
+        wastefully in the python-docx path before it ImportErrors out. That
+        double-scan (the whole archive, every .xml/.rels member, decoded
+        across five candidate encodings) is exactly what the earlier review
+        round asked to remove."""
+        from book_to_skill.parsers import docx as docx_module
+
+        docx_path = _make_minimal_docx(tmp_path / "test.docx")
+
+        real_import = __import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "docx":
+                raise ImportError("simulated: python-docx not installed")
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch.object(
+            docx_module,
+            "validate_docx_xml_safety",
+            wraps=docx_module.validate_docx_xml_safety,
+        ) as spy:
+            with mock.patch("builtins.__import__", side_effect=fake_import):
+                text, method = docx_module.extract_docx(str(docx_path))
+
+        assert method == "zipfile-docx"
+        assert "DOCX test paragraph" in text
+        assert spy.call_count == 1
 
 
 
