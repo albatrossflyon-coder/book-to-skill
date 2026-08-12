@@ -2,15 +2,34 @@
 
 `C:\Repos\book-to-skill` — fork of [virgiliojr94/book-to-skill](https://github.com/virgiliojr94/book-to-skill) (upstream), pushed to `albatrossflyon-coder/book-to-skill` (origin, write access). OSS contribution repo, not an Albatross AI product — this log tracks our contribution work only, not the upstream project as a whole.
 
+**Note on clones (added 2026-08-12):** there is a second, independent local clone of this same fork at `C:\Repos\External\book-to-skill`, used for the personalmba.com/Kaufman evaluation, the Kaizen layer experiment, and the trafilatura fix below. Same GitHub remotes, separate working trees — a commit in one doesn't appear in the other until fetched. Worth consolidating into one clone eventually; not done yet.
+
 ## Tech Stack
 
 - **Languages:** Python (>=3.9)
-- **Frameworks/Libraries:** hatchling (build), pytest, ruff, optional parser deps (python-docx, pypdf, pdfminer.six, ebooklib, beautifulsoup4, striprtf, docling)
-- **Dev Tools:** GitHub Actions CI, git-cliff (changelog generation)
+- **Frameworks/Libraries:** hatchling (build), pytest, ruff, optional parser deps (python-docx, pypdf, pdfminer.six, ebooklib, beautifulsoup4, striprtf, docling, **trafilatura** — added 2026-08-12, real HTML boilerplate detection, optional via `[html]` extra)
+- **Dev Tools:** GitHub Actions CI, git-cliff (changelog generation), uv (package manager in the `External` clone — note: `uv run <tool>` can silently resolve to the wrong Python if the tool isn't a declared project dependency; verify with `.venv/Scripts/python.exe -m <tool>` instead)
+
+## 2026-08-12 — PR #142 shipped: trafilatura for real HTML boilerplate detection
+
+**Status: pushed to fork, remote SHA verified, PR open (https://github.com/virgiliojr94/book-to-skill/pull/142) awaiting maintainer review.**
+
+**How the bug was found (2026-08-08, TEDx→book-to-skill evaluation):** ran `scripts/extract.py` against 61 real pages scraped from personalmba.com (Josh Kaufman's official free-excerpt site for *The Personal MBA*), across two full chapters (Value Creation, Marketing). A repeated footer block (book ad + author bio + copyright notice) appeared 183 times in the combined extracted text. Root-caused by reading `extract_html_content()` in `book_to_skill/parsers/html.py` directly: it strips only `<script>`/`<style>`/`<head>` on both the bs4 path and the stdlib fallback path — neither does real main-content vs. page-chrome detection.
+
+**The fix:** wired `trafilatura` in as the new primary extraction path, falling through to the existing bs4 path and then the stdlib parser on any failure (missing dependency, low-quality/whitespace result, or a parse exception) — matching the function's existing graceful-degradation design. Kept optional (`pip install book-to-skill[html]`) so the base install stays dependency-free.
+
+**Verified:** re-ran extraction against the same 61 real pages — boilerplate dropped from 183 to 69 hits. The actual footer (ad block, copyright/trademark notice) is fully eliminated; the remaining 69 are one line — the site's own page masthead, appearing once per page, structurally closer to real article lead-in than nav/footer chrome. 5 new deterministic tests added (`tests/test_html_boilerplate_extraction.py`) covering the fallback contract. Full suite: 415 passed, 3 failed — confirmed via `git log` those 3 are pre-existing (added by the maintainer's own latest commit #141, asserting POSIX permission bits that don't hold on Windows), unrelated to this change.
+
+**Real gotchas hit building this:**
+1. The working branch also carried an unrelated local-only "Kaizen self-evolving layer" experiment — had to cut a fresh branch off current `origin/master` and manually reapply just the relevant files to keep this a real "one focused change" PR.
+2. `uv run pytest`/`uv run ruff` silently resolved to an unrelated Python install from PATH instead of this project's own `.venv` — two verification passes looked green but weren't actually testing against an environment with `trafilatura` installed. Fixed by installing test tools directly into `.venv`.
+3. This `BUILDLOG.md` file appeared to have gone missing between 08-11 and 08-12 — turned out to be a false alarm: the `C:\Repos\External\book-to-skill` clone's local `master` branch pointer had drifted to track `origin/master` (upstream) instead of `fork/master` (ours), after running `git fetch origin master`. The real file was safe on `fork/master` the whole time (commit `300506d`). Lesson: after fetching upstream directly by name (`git fetch origin <branch>`), double-check which remote a local branch is actually tracking before assuming a file is gone.
+
+**Open:** watching PR #142 for maintainer review/comments.
 
 ## 2026-08-12 02:47 CDT — PR #99 shipped: XXE hardening for DOCX extraction
 
-**Status: pushed to origin, remote SHA verified, PR open awaiting maintainer merge.**
+**Status: MERGED 2026-08-12T13:17:10Z by virgiliojr94. Issue #140 also closed the same day, on solid technical grounds. Fully closed, no open action.**
 
 Three-round contribution fixing an XXE (XML External Entity) gap in `book_to_skill/parsers/docx.py`:
 
