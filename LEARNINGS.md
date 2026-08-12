@@ -31,3 +31,4 @@ The actual evidence trail. One line every time Step 1 checks this file:
 ```
 
 - 2026-08-08, 12:48 PM CDT — checked | empty: no entries yet (first real run) | outcome: added the "extraction" entry above after finding a genuine gap in `extract_html_content()`. Note: this run was done by manually invoking `scripts/extract.py` directly, not through the formal SKILL.md workflow — worth a real Step-1-through-Step-8 run next session to test the full loop, not just the extraction step in isolation.
+- 2026-08-12 — checked | hit: the "extraction" entry above — confirmed it was still the exact, current root cause (re-read `extract_html_content()` before touching it) rather than re-diagnosing from scratch. This run went through the real start-to-finish Step 1-8 loop the prior entry asked for.

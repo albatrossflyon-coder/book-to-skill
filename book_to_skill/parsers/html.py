@@ -87,6 +87,29 @@ class _HTMLTextExtractor(html.parser.HTMLParser):
 
 def extract_html_content(raw_html: str) -> str:
     try:
+        import trafilatura
+    except ImportError:
+        trafilatura = None
+
+    if trafilatura is not None:
+        # trafilatura does real main-content/boilerplate detection (nav, footer,
+        # ads, cookie banners) -- neither the bs4 path below nor the stdlib
+        # fallback attempt this, they only strip script/style/head. Falls
+        # through to bs4 on a missing dependency, a page trafilatura can't
+        # confidently extract from (e.g. very short pages -- returns None or
+        # whitespace, not always an exception), and on any parse failure
+        # (e.g. malformed HTML raising inside trafilatura itself), rather than
+        # propagating an exception or returning a silently empty result.
+        try:
+            extracted = trafilatura.extract(
+                raw_html, include_tables=True, include_formatting=False
+            )
+        except Exception:
+            extracted = None
+        if extracted and extracted.strip():
+            return extracted
+
+    try:
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(raw_html, "html.parser")
         for element in soup(["script", "style", "head"]):
