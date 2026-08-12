@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
@@ -27,11 +29,13 @@ SAMPLE_HTML = "<html><body><h1>Chapter 1</h1><p>Real content here.</p></body></h
 
 class TestTrafilaturaPrimaryPath:
     def test_uses_trafilatura_result_when_available(self):
+        pytest.importorskip("trafilatura")
         with patch("trafilatura.extract", return_value="Chapter 1\nReal content here."):
             result = extract_html_content(SAMPLE_HTML)
         assert result == "Chapter 1\nReal content here."
 
     def test_falls_back_to_bs4_when_trafilatura_returns_none(self):
+        pytest.importorskip("trafilatura")
         with patch("trafilatura.extract", return_value=None):
             result = extract_html_content(SAMPLE_HTML)
         assert "Real content here." in result
@@ -40,6 +44,7 @@ class TestTrafilaturaPrimaryPath:
         # A near-empty/low-confidence result is still truthy -- must not be
         # returned as-is, or a page trafilatura can't confidently parse
         # silently produces an empty skill instead of falling through.
+        pytest.importorskip("trafilatura")
         with patch("trafilatura.extract", return_value="   \n  "):
             result = extract_html_content(SAMPLE_HTML)
         assert "Real content here." in result
@@ -48,6 +53,7 @@ class TestTrafilaturaPrimaryPath:
         # A parse-time exception (e.g. malformed HTML) must not propagate --
         # the whole point of this function is graceful degradation through
         # bs4 -> stdlib, not a hard failure on the best-effort first attempt.
+        pytest.importorskip("trafilatura")
         with patch("trafilatura.extract", side_effect=ValueError("simulated parse failure")):
             result = extract_html_content(SAMPLE_HTML)
         assert "Real content here." in result
