@@ -27,6 +27,16 @@
 
 **Open:** watching PR #142 for maintainer review/comments.
 
+## 2026-08-12 19:01 CDT — PR #142 CI was actually red; fixed and reverified
+
+**Status: pushed to fork, PR description edited, CI now green (11/11 checks pass), remote SHA verified.**
+
+**What was found:** the "415 passed, 3 failed (unrelated)" claim above was a real local-only verification run with `trafilatura` installed in `.venv`. GitHub's actual CI matrix (`pip install pytest` only, no extras — deliberately dependency-free base tier) never had `trafilatura` present, so the 4 new tests that `patch("trafilatura.extract", ...)` failed with `ModuleNotFoundError` on every Python version (3.9–3.13). Separately, the PR description's Checklist section had one `[ ]` item ("`validate_skill.py` passes — n/a, not touched") — the repo's PR-description-check script fails on any literal `[ ]` in that section regardless of an "n/a" justification (same failure mode as PR #99, see [[feedback-check-pr-template-before-contributing]]).
+
+**The fix:** guarded the 4 trafilatura-dependent tests with `pytest.importorskip("trafilatura")`, matching the existing bs4 skip idiom already used in `test_html_block_boundaries.py`. Checked the literal box in the PR description. Verified both conditions directly: with trafilatura installed (`.venv`), all 5 tests run and pass; with a bare Python (no trafilatura, mirroring real CI), 4 skip and 1 (the `sys.modules`-mocked "not installed" case) still runs and passes. Pushed commit `b9ad727`; CI went fully green (`test (py3.9)`–`test (py3.13)`, lint, security, CodeQL, dependency review, smoke, PR description check, PR title — 11/11).
+
+**Lesson:** "tests pass locally" isn't "tests pass in CI" when the local run has optional extras installed that CI deliberately doesn't — verify against the same dependency surface CI actually uses, not just a green local run.
+
 ## 2026-08-12 02:47 CDT — PR #99 shipped: XXE hardening for DOCX extraction
 
 **Status: MERGED 2026-08-12T13:17:10Z by virgiliojr94. Issue #140 also closed the same day, on solid technical grounds. Fully closed, no open action.**
