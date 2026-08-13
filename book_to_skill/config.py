@@ -35,6 +35,7 @@ PYTHON_DEPENDENCIES = {
     "bs4": "beautifulsoup4",
     "docx": "python-docx",
     "striprtf": "striprtf",
+    "trafilatura": "trafilatura",
 }
 
 

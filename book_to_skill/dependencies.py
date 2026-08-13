@@ -45,10 +45,10 @@ DEPENDENCY_GROUPS = [
     },
     {
         "label": "HTML",
-        "modules": ["bs4"],
+        "modules": ["trafilatura", "bs4"],
         "any_of_modules": True,
         "system": [],
-        "note": "falls back to the stdlib html.parser if missing",
+        "note": "trafilatura does real boilerplate detection; falls back to bs4, then the stdlib html.parser, if missing",
     },
     {
         "label": "RTF",

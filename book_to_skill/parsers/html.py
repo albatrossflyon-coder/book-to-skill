@@ -86,6 +86,11 @@ class _HTMLTextExtractor(html.parser.HTMLParser):
 
 
 def extract_html_content(raw_html: str) -> str:
+    # ponytail: prints mirror extract_docx()'s "Trying X..." style so a run
+    # says which of the three extractors actually answered, instead of
+    # silently returning one of two materially different documents (the
+    # trafilatura result strips page chrome the bs4/stdlib paths don't).
+    print("Trying trafilatura...", end=" ", flush=True)
     try:
         import trafilatura
     except ImportError:
@@ -107,17 +112,26 @@ def extract_html_content(raw_html: str) -> str:
         except Exception:
             extracted = None
         if extracted and extracted.strip():
+            print("OK")
             return extracted
+        print("no confident extraction, falling back")
+    else:
+        print("not available")
 
+    print("Trying BeautifulSoup (bs4)...", end=" ", flush=True)
     try:
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(raw_html, "html.parser")
         for element in soup(["script", "style", "head"]):
             element.decompose()
+        print("OK")
         return soup.get_text(separator="\n")
     except ImportError:
+        print("not available")
+        print("Trying stdlib HTML parser...", end=" ", flush=True)
         parser = _HTMLTextExtractor()
         parser.feed(raw_html)
+        print("OK")
         return parser.get_text()
 
 

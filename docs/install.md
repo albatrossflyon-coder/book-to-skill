@@ -75,6 +75,12 @@ book-to-skill ~/path/to/book.pdf --mode text  # or: python -m book_to_skill ...
 book-to-skill --check                          # report which extractors are installed
 ```
 
+> **`[html]` is heavier than the others.** It pulls in `trafilatura`, which brings a full
+> HTML-processing stack (lxml, a date parser, a timezone database, a URL classifier — 17
+> packages total) to do real main-content/boilerplate detection instead of just stripping
+> `<script>`/`<style>`. Worth knowing before installing on a constrained machine — the
+> `bs4` fallback (no `[html]` extra needed) still works, just without boilerplate removal.
+
 ---
 
 
