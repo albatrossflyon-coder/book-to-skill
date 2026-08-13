@@ -10,6 +10,20 @@
 - **Frameworks/Libraries:** hatchling (build), pytest, ruff, optional parser deps (python-docx, pypdf, pdfminer.six, ebooklib, beautifulsoup4, striprtf, docling, **trafilatura** — added 2026-08-12, real HTML boilerplate detection, optional via `[html]` extra)
 - **Dev Tools:** GitHub Actions CI, git-cliff (changelog generation), uv (package manager in the `External` clone — note: `uv run <tool>` can silently resolve to the wrong Python if the tool isn't a declared project dependency; verify with `.venv/Scripts/python.exe -m <tool>` instead)
 
+## 2026-08-13 — PR #142 review round: two required changes shipped, question answered, rebased onto master
+
+**Status: pushed (SHA `6145982`, remote-verified via `gh api`), reply comment posted (https://github.com/virgiliojr94/book-to-skill/pull/142#issuecomment-5286645736), still open awaiting the maintainer's next look.**
+
+Maintainer reviewed #142 same-day. Praised the measurement (61 real pages, named corpus, honest accounting), flagged two things before he'd take it, and asked one question:
+
+1. **`[html]` extra's weight was undocumented** — `docs/install.md` never mentioned it pulls trafilatura's real 17-package HTML stack (lxml, date parser, timezone DB, URL classifier). Fixed: one line under the pip install example.
+2. **The new primary path was invisible** — not registered in `DEPENDENCY_GROUPS` (`--check` still reported HTML as bs4-only), and `extract_html_content()` returned one of two materially different documents with zero indication which ran. Fixed: trafilatura registered as primary module in the HTML group; added "Trying X..." prints mirroring `extract_docx()`'s existing style.
+3. **Question:** did the 61-page corpus have any code-shaped content, to know whether `include_formatting=False` was tested against it? Checked the actual corpus (not memory) — personalmba.com prose only, two book chapters, no code anywhere. Answered honestly: untested territory.
+
+**Real gotcha:** rebased onto what I thought was `origin/master` to pick up the maintainer's own #155 fix (his separate regression from #141, POSIX permission asserts failing on Windows) — but `origin` here is our fork, which hadn't synced his merge yet. Rebased onto `upstream/master` instead once caught by actually running the full suite and seeing the same 3 failures persist. 2 of 3 fixed by #155 as expected; the third (`test_prepare_output_dir_rejects_symlink`) needs Windows symlink-creation privileges (Developer Mode/elevation) this session doesn't have — confirmed unrelated to this PR's diff, moot on the maintainer's `ubuntu-latest` CI.
+
+Verified both with and without `trafilatura` installed in `.venv` before pushing (the exact gap that caused the 08-12 CI break) — 474 passed / 0 failed / 7 skipped-without-trafilatura with it installed.
+
 ## 2026-08-12 — PR #142 shipped: trafilatura for real HTML boilerplate detection
 
 **Status: pushed to fork, remote SHA verified, PR open (https://github.com/virgiliojr94/book-to-skill/pull/142) awaiting maintainer review.**
