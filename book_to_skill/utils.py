@@ -533,32 +533,37 @@ def resolve_input_files(paths: list[str]) -> list[Path]:
         # Normalise "~" once, at the entry point, so both the glob branch and
         # the file/directory branch below see a real path.
         path_str = os.path.expanduser(raw_path)
-        # Check if it has glob wildcards
-        if any(char in path_str for char in ("*", "?", "[")):
+        p = Path(path_str)
+        has_glob_chars = any(char in path_str for char in ("*", "?", "["))
+
+        # A literal path that exists takes priority over glob expansion: "["
+        # is a valid character in a real filename (e.g. Zotero's default
+        # "Author - Title [year].pdf" naming), but glob.glob() treats it as
+        # opening a character class and silently matches nothing. Only
+        # expand as a glob pattern when there's no literal match.
+        if has_glob_chars and not p.exists():
             glob_matches = glob.glob(path_str, recursive=True)
             # Sort expanded glob results deterministically
             expanded = []
             for match in glob_matches:
-                p = Path(match)
-                if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS:
-                    expanded.append(p.resolve())
+                gp = Path(match)
+                if gp.is_file() and gp.suffix.lower() in SUPPORTED_EXTENSIONS:
+                    expanded.append(gp.resolve())
             expanded.sort(key=lambda x: str(x).lower())
             resolved.extend(expanded)
+        elif p.is_dir():
+            # Sort expanded directory results deterministically
+            dir_files = []
+            for root, _, files in os.walk(p):
+                for file in files:
+                    file_path = Path(root) / file
+                    if file_path.suffix.lower() in SUPPORTED_EXTENSIONS:
+                        dir_files.append(file_path.resolve())
+            dir_files.sort(key=lambda x: str(x).lower())
+            resolved.extend(dir_files)
         else:
-            p = Path(path_str)
-            if p.is_dir():
-                # Sort expanded directory results deterministically
-                dir_files = []
-                for root, _, files in os.walk(p):
-                    for file in files:
-                        file_path = Path(root) / file
-                        if file_path.suffix.lower() in SUPPORTED_EXTENSIONS:
-                            dir_files.append(file_path.resolve())
-                dir_files.sort(key=lambda x: str(x).lower())
-                resolved.extend(dir_files)
-            else:
-                # Keep even if it doesn't exist so the error check can report it
-                resolved.append(p.resolve())
+            # Keep even if it doesn't exist so the error check can report it
+            resolved.append(p.resolve())
 
     # Deduplicate while preserving insertion order (user order for explicit files)
     seen = set()
