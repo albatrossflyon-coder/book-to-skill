@@ -86,7 +86,7 @@ class _HTMLTextExtractor(html.parser.HTMLParser):
 
 
 def extract_html_content(raw_html: str) -> str:
-    # ponytail: prints mirror extract_docx()'s "Trying X..." style so a run
+    # Prints mirror extract_docx()'s "Trying X..." style so a run
     # says which of the three extractors actually answered, instead of
     # silently returning one of two materially different documents (the
     # trafilatura result strips page chrome the bs4/stdlib paths don't).
