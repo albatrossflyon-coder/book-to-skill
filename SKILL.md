@@ -1,13 +1,14 @@
 ---
 name: book-to-skill
-description: "Converts books and documents (PDF, EPUB, DOCX, HTML, Markdown, plain text, RTF, MOBI/AZW with Calibre) into structured agent skills, extracting frameworks, mental models, principles, techniques, and anti-patterns. Use when the user wants to study a document through GitHub Copilot CLI, Amp, or Claude Code, apply an author's frameworks while working, or build a reusable knowledge base from a file."
+description: "Converts books and documents (PDF, EPUB, DOCX, HTML, Markdown, plain text, RTF, MOBI/AZW with Calibre) into structured agent skills, extracting frameworks, mental models, principles, techniques, and anti-patterns. Use when the user wants to study a document through GitHub Copilot CLI, Amp, Claude Code, or Hermes Agent, apply an author's frameworks while working, or build a reusable knowledge base from a file."
 ---
 
 <!--
 Cross-agent notes (informational; ignored by host agents):
   - Compatible skill roots: GitHub Copilot CLI (~/.copilot/skills, ~/.agents/skills,
     .github/skills, .claude/skills, .agents/skills), Amp (.agents/skills,
-    ~/.config/agents/skills, ~/.config/amp/skills), Claude Code (~/.claude/skills).
+    ~/.config/agents/skills, ~/.config/amp/skills), Claude Code (~/.claude/skills),
+    Hermes Agent ($HERMES_HOME/skills, .hermes/skills, .agents/skills).
   - `allowed-tools` is intentionally omitted to stay agent-neutral: Copilot CLI uses
     `shell`/MCP-server names, Claude uses `Bash`/`Read`/`Write`/`Glob`/`Grep`, Amp
     adds `shell_command`. The skill needs shell (to run extract.py) and file
@@ -21,7 +22,7 @@ Transform written knowledge into actionable agent skills by extracting structure
 
 ## Philosophy
 
-Books contain crystallized expertise: frameworks, principles, and techniques that took years to develop. This skill extracts that knowledge into a format GitHub Copilot CLI, Amp, Claude Code, or another compatible agent can leverage repeatedly.
+Books contain crystallized expertise: frameworks, principles, and techniques that took years to develop. This skill extracts that knowledge into a format GitHub Copilot CLI, Amp, Claude Code, Hermes Agent, or another compatible agent can leverage repeatedly.
 
 **Extract structure, not summaries.** A skill isn't a book report. It's a toolkit of:
 - Named frameworks (mental models with clear application)
@@ -74,6 +75,8 @@ This converter can run from multiple skill systems. When looking for this conver
 6. Project-local Amp / Copilot skills: `.agents/skills/`
 7. Amp global skills: `~/.config/agents/skills/`
 8. Amp legacy global skills: `~/.config/amp/skills/`
+9. Hermes Agent personal skills: `$HERMES_HOME/skills/` (defaults to `~/.hermes/skills/`)
+10. Hermes Agent project skills: `.hermes/skills/` or `.agents/skills/`
 
 For **generated** book skills, pick a destination that the user's host agent can actually discover (see Step 5). When more than one valid root exists, ask the user once and remember the answer for the session — do not silently default.
 
@@ -130,15 +133,45 @@ Run the extraction script, passing the input paths:
 
 ```bash
 SCRIPT_PATH=""
-for candidate in \
-  "$HOME/.copilot/skills/book-to-skill/scripts/extract.py" \
-  "$HOME/.agents/skills/book-to-skill/scripts/extract.py" \
-  "$HOME/.claude/skills/book-to-skill/scripts/extract.py" \
-  ".github/skills/book-to-skill/scripts/extract.py" \
-  ".claude/skills/book-to-skill/scripts/extract.py" \
-  ".agents/skills/book-to-skill/scripts/extract.py" \
-  "$HOME/.config/agents/skills/book-to-skill/scripts/extract.py" \
+HERMES_HOME_RESOLVED="${HERMES_HOME:-$HOME/.hermes}"
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+HERMES_PROJECT_TRUSTED=false
+if [ -n "$PROJECT_ROOT" ] && [ "${HERMES_AGENT:-}" = true ] && \
+  command -v hermes >/dev/null 2>&1 && \
+  command -v python3 >/dev/null 2>&1 && \
+  hermes config get skills.trusted_project_dirs --json 2>/dev/null | PROJECT_ROOT="$PROJECT_ROOT" python3 -c 'import json, os, pathlib, sys; root=pathlib.Path(os.environ["PROJECT_ROOT"]).resolve(); sys.exit(not any(pathlib.Path(p).expanduser().resolve() == root for p in json.load(sys.stdin)))' 2>/dev/null
+then
+  HERMES_PROJECT_TRUSTED=true
+fi
+
+CANDIDATES=(
+  "$HOME/.copilot/skills/book-to-skill/scripts/extract.py"
+  "$HOME/.agents/skills/book-to-skill/scripts/extract.py"
+  "$HOME/.claude/skills/book-to-skill/scripts/extract.py"
+  "$HERMES_HOME_RESOLVED/skills/book-to-skill/scripts/extract.py"
+  "$HERMES_HOME_RESOLVED"/skills/*/book-to-skill/scripts/extract.py
+)
+if [ "${HERMES_AGENT:-}" != true ]; then
+  CANDIDATES+=(
+    ".github/skills/book-to-skill/scripts/extract.py"
+    ".claude/skills/book-to-skill/scripts/extract.py"
+    ".agents/skills/book-to-skill/scripts/extract.py"
+  )
+fi
+CANDIDATES+=(
+  "$HOME/.config/agents/skills/book-to-skill/scripts/extract.py"
   "$HOME/.config/amp/skills/book-to-skill/scripts/extract.py"
+)
+if [ "$HERMES_PROJECT_TRUSTED" = true ]; then
+  CANDIDATES=(
+    "$PROJECT_ROOT/.hermes/skills/book-to-skill/scripts/extract.py"
+    "$PROJECT_ROOT/.hermes/skills"/*/book-to-skill/scripts/extract.py
+    "$PROJECT_ROOT/.agents/skills/book-to-skill/scripts/extract.py"
+    "$PROJECT_ROOT/.agents/skills"/*/book-to-skill/scripts/extract.py
+    "${CANDIDATES[@]}"
+  )
+fi
+for candidate in "${CANDIDATES[@]}"
 do
   if [ -f "$candidate" ]; then
     SCRIPT_PATH="$candidate"
@@ -163,21 +196,26 @@ Before extraction, the script checks optional Python packages needed for the det
 
 **Tip — preflight the environment:** run `"$PYTHON_BIN" "$SCRIPT_PATH" --check` to print a per-format report of which extractors are installed and the exact command to install whatever is missing, without processing any file. Useful when a user reports a setup or quality problem.
 
-This creates:
-- `<tempdir>/book_skill_work/full_text.txt` — combined extracted text of all sources with clear visually demarcated boundaries.
-- `<tempdir>/book_skill_work/metadata.json` — overall combined size, words, pages, token counts, and a detailed list of individual processed `sources`.
+This creates a **per-run** work directory — `<tempdir>/book_skill_work-<pid>/` by default, or exactly the path you set in `BOOK_SKILL_WORKDIR` — containing:
+- `full_text.txt` — combined extracted text of all sources with clear visually demarcated boundaries.
+- `metadata.json` — overall combined size, words, pages, token counts, dropped EPUB image counts, the resolved `workdir`, and a detailed list of individual processed `sources`.
 
-Read `<tempdir>/book_skill_work/metadata.json` to inspect the results.
+The run prints all three paths on completion (`Workdir ->`, `Text ->`, `Meta ->`). **Take the paths from that output (or from `metadata.json`'s own `workdir` field) rather than assuming a fixed location** — the directory name differs per run so that concurrent extractions on one machine cannot overwrite each other's results.
+
+Read that run's `metadata.json` to inspect the results.
+
+**Always confirm the extraction is the document you asked for** before generating anything: check `filename` / `source_file` in `metadata.json`, or the `SOURCE:` header on the first line of `full_text.txt`. If you are waiting on a background run, wait on *its* specific workdir — polling a shared path can surface a different run's output.
 
 ---
 
 ## Step 2.5 — Pre-flight cost estimate
 
-Read `<tempdir>/book_skill_work/metadata.json` and present the user with an estimate **before doing any generation**:
+Read this run's `metadata.json` (the `Meta ->` path from the extraction output) and present the user with an estimate **before doing any generation**:
 
 ```
 📖 Sources detected: <total_sources> source(s)
 <list each source filename and format from the sources metadata list>
+<if images_dropped > 5: warn that N source images were not read>
 📄 Combined Pages/Sections: ~<N> | Words: ~<N> | Total tokens: ~<N>K
 
 💰 Estimated token cost (Full Conversion / Update):
@@ -308,12 +346,15 @@ Choose the destination skill root (`SKILLS_HOME`). Probe the user's filesystem f
 | **Amp** | `~/.agents/skills` → `~/.config/agents/skills` → `~/.config/amp/skills` | `.agents/skills` |
 | **Claude Code** | `~/.claude/skills` | `.claude/skills` |
 | **OpenAI Codex** | `~/.agents/skills` (discovered natively; follows symlinks) | `.agents/skills` |
+| **Hermes Agent** | `$HERMES_HOME/skills/<category>` (defaults to `~/.hermes/skills/<category>`) | `.hermes/skills/<category>` → `.agents/skills` |
+
+For Hermes Agent, use the active profile's `HERMES_HOME` and choose a category that matches the generated skill's subject. Do not construct profile paths manually. If the user selects a project-local Hermes root, run `hermes skills trust <project-root>` after generation and verify discovery with `hermes skills list`; project skills remain unavailable until the project is trusted.
 
 Selection rules:
 1. If **exactly one** of the host's candidate roots exists on disk, use it without asking.
 2. If **none** exist (fresh machine), ask the user which root to create — present the host-appropriate options and remember the choice for the session. Do not silently pick.
 3. If the user explicitly asked for project-local output, prefer the project-local row.
-4. If you cannot identify the host, ask: "Which agent are you running this in — GitHub Copilot CLI, Amp, Codex, or Claude Code?"
+4. If you cannot identify the host, ask: "Which agent are you running this in — Hermes Agent, GitHub Copilot CLI, Amp, Codex, or Claude Code?"
 
 Set `SKILLS_HOME` to the selected root and check if `$SKILLS_HOME/<skill_name>/` already exists.
 If it does, prompt the user to choose:

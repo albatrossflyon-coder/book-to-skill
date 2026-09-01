@@ -15,6 +15,13 @@ from book_to_skill.config import PYTHON_DEPENDENCIES, HTML_EXTENSIONS
 # enough unless noted); `system` are external commands resolved via PATH.
 DEPENDENCY_GROUPS = [
     {
+        "label": "PDF (smart inspection / native Markdown)",
+        "modules": ["pdf_inspector"],
+        "any_of_modules": True,
+        "system": [],
+        "note": "optional fast classifier/provenance layer; falls back to the existing PDF chain",
+    },
+    {
         "label": "PDF (text-heavy)",
         "modules": ["pypdf", "pdfminer"],
         "any_of_modules": True,
@@ -45,10 +52,10 @@ DEPENDENCY_GROUPS = [
     },
     {
         "label": "HTML",
-        "modules": ["bs4"],
+        "modules": ["trafilatura", "bs4"],
         "any_of_modules": True,
         "system": [],
-        "note": "falls back to the stdlib html.parser if missing",
+        "note": "trafilatura does real boilerplate detection; falls back to bs4, then the stdlib html.parser, if missing",
     },
     {
         "label": "RTF",

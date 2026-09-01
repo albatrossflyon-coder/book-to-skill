@@ -46,8 +46,14 @@ from book_to_skill.parsers.epub import (
     extract_with_ebooklib,
     extract_with_zipfile,
     count_epub_chapters,
+    count_epub_images,
 )
 from book_to_skill.sanitize import sanitize_extracted_text
+
+
+# Covers and decorative assets are common in prose EPUBs, so only surface the
+# omission when the archive contains more than five images.
+_EPUB_IMAGE_NOTICE_THRESHOLD = 5
 
 
 # CJK codepoints: ideographs + extensions, kana, hangul, CJK punctuation, and
@@ -64,8 +70,12 @@ from book_to_skill.sanitize import sanitize_extracted_text
 # those characters fell through to the whitespace-word branch, where a
 # space-less run of them counts as a single "word": the same ~1000x undercount
 # #103 fixed for the BMP, one plane up.
+# The Kangxi-radical range (U+2F00-U+2FDF) is included because some Chinese
+# ebooks render ordinary Han characters — 网 as ⽹ (U+2F79), 大 as ⼤
+# (U+2F24), 一 as ⼀ (U+2F00) — as radical forms throughout the whole text;
+# without it such a book still falls through to the whitespace-word branch.
 _CJK_RE = re.compile(
-    r"[　-〿぀-ヿ㐀-䶿一-鿿"
+    r"[⼀-⿟　-〿぀-ヿ㐀-䶿一-鿿"
     r"가-힣豈-﫿＀-￯"
     r"\U00020000-\U0003FFFF]"
 )
@@ -91,19 +101,20 @@ def estimate_tokens(text: str) -> int:
 
 
 # Explicit chapter heading: "Chapter 5", "Capítulo 5: ...", "Chapter 1. Intro".
-# Also French/German/Italian/Dutch chapter words (chapitre/kapitel/capitolo/
-# hoofdstuk), matching the ToC languages added alongside. "ch.?" stays last so
-# the longer words match in full. Captures the number (bounded to 1..99 — drops
-# years like "2025.") and whatever follows it on the line, so we can reject prose.
+# Also French/German/Italian/Dutch/Vietnamese chapter words (chapitre/kapitel/
+# capitolo/hoofdstuk/chương), matching the ToC languages added alongside. "ch.?"
+# stays last so the longer words match in full. Captures the number (bounded to
+# 1..99 — drops years like "2025.") and whatever follows it on the line, so we
+# can reject prose.
 _EXPLICIT_CHAPTER = re.compile(
-    r"^\s*(?:chapter|chapitre|kapitel|cap[ií]tulo|capitolo|hoofdstuk|ch\.?)\s*(?:(\d{1,2})|(?P<roman>[IVXLCDMivxlcdm]{1,7}))\b(?P<rest>.*)$",
+    r"^\s*(?:chapter|unit|lesson|module|lecture|part|chapitre|kapitel|cap[ií]tulo|capitolo|hoofdstuk|chương|ch\.?)\s*(?:(\d{1,2})|(?P<roman>[IVXLCDMivxlcdm]{1,7}))\b(?P<rest>.*)$",
     re.IGNORECASE,
 )
 # A heading's number is followed by end-of-line, punctuation (“. : - —“), or a
 # Capitalized title word. A lowercase continuation (“Chapter 6 explores...”,
 # “Chapter 8 are relevant...”) is prose / a cross-reference, not a heading.
 # The uppercase class is À-Þ so titles starting with Ü/Û (common in German, e.g. “Überblick”) are recognized.
-_HEADING_TAIL = re.compile(r"^\s*$|^\s*[.:\-—–]|^\s+[A-ZÀ-Þ0-9\"“(]")
+_HEADING_TAIL = re.compile(r"^\s*$|^\s*[.:\-—–]|^\s+(?![a-z])")
 
 # Roman-numeral chapter heading: "I: Loomings", "II. The Carpet-Bag".
 # Uppercase alone at line start is safe — no common English word is a valid
@@ -134,6 +145,19 @@ _CN_NUM_VALUES = {
 }
 _CN_NUM_UNITS = {"十": 10, "百": 100, "千": 1000}
 _CN_NUM_CLASS = "〇零一二两三四五六七八九十百千"
+
+# Kangxi-radical numerals → CJK ideograph numerals. Some Chinese ebooks
+# (e.g. certain e-reader platforms) encode numerals as Kangxi radicals from
+# the U+2F00 block instead of CJK unified ideographs — "第⼀章" with
+# U+2F00 (⼀) rather than U+4E00 (一). NFKC does not map these, so normalize
+# them explicitly before chapter detection. Only numerals that exist as
+# Kangxi radicals are listed (三/四/五/六/七/九 have no radical form).
+_KANGXI_NUMERAL_TRANS = {
+    0x2F00: ord("一"),  # ⼀ KANGXI RADICAL ONE
+    0x2F06: ord("二"),  # ⼆ KANGXI RADICAL TWO
+    0x2F0B: ord("八"),  # ⼋ KANGXI RADICAL EIGHT
+    0x2F17: ord("十"),  # ⼗ KANGXI RADICAL TEN
+}
 # Full-width Arabic digits (U+FF10–U+FF19) are common in Japanese typesetting,
 # e.g. "第１章". int() already parses them (str.isdigit() is True), so only the
 # regex character classes need to accept them.
@@ -151,6 +175,38 @@ _TH_CHAPTER = re.compile(
     rf"^\s*(?:#{{1,6}}\s+)?(?:บทที่|ตอนที่|ภาคที่|บท|ตอน|ภาค)\s*([0-9{_TH_DIGITS}]+)\b"
 )
 
+# Hindi (Devanagari) chapter headings: "अध्याय 1", "अध्याय १", "## अध्याय 2".
+# अध्याय ("chapter") + a number. Devanagari digits (U+0966-U+096F) are positional
+# like Arabic, so — as with Thai — only a digit remap is needed, no composition.
+# Optional Markdown "#" prefix so "## अध्याय १" is recognized in converted ebooks.
+# Scoped to the digit form (not word ordinals like "पहला अध्याय") and requiring a
+# number keeps prose that merely uses the word अध्याय from matching.
+_HI_DIGITS = "०-९"
+_HI_DIGIT_MAP = str.maketrans("०१२३४५६७८९", "0123456789")
+_HI_CHAPTER = re.compile(
+    rf"^\s*(?:#{{1,6}}\s+)?अध्याय\s*([0-9{_HI_DIGITS}]+)\b"
+)
+
+# Bengali chapter headings: "অধ্যায় 1", "অধ্যায় ১", "## অধ্যায় 2".
+# অধ্যায় ("chapter") + a number. Bengali digits (U+09E6-U+09EF) are positional
+# like the Hindi block above, so only a digit remap is needed. Optional Markdown
+# "#" prefix so "## অধ্যায় ১" is recognized in converted ebooks. Requiring a
+# number keeps prose that merely uses the word অধ্যায় from matching.
+_BN_DIGITS = "০-৯"
+_BN_DIGIT_MAP = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
+_BN_CHAPTER = re.compile(
+    rf"^\s*(?:#{{1,6}}\s+)?অধ্যায়\s*([0-9{_BN_DIGITS}]+)\b"
+)
+
+# Russian (Cyrillic) chapter headings: "Глава 1", "ГЛАВА 12", "## Глава 2".
+# "Глава" ("chapter") + a number. Cyrillic uses ordinary Arabic digits, so —
+# unlike the Devanagari/Bengali blocks above — no digit remap is needed. A
+# dedicated matcher (rather than adding the word to _EXPLICIT_CHAPTER) is used
+# because that alternation is Latin-only and its number would still be read
+# there. Requiring whitespace then a number keeps prose that merely uses an
+# inflected form ("В этой главе…", "Главная страница") from matching.
+_RU_CHAPTER = re.compile(r"^\s*(?:#{1,6}\s+)?глава\s+([0-9]+)\b", re.IGNORECASE)
+
 # Korean chapter headings: "제1장 총칙", "## 제4장 근로시간과 휴식", "제6장의2 …".
 # 제 + Arabic numeral + a classifier (장 chapter / 편 part / 절 section / 관
 # subsection), with an optional "의N" branch suffix that Korean statutes use for
@@ -167,6 +223,88 @@ _KO_CHAPTER = re.compile(
     r"^\s*(?:#{1,6}\s+)?제\s*([0-9]+)\s*[장편절관](?:\s*의\s*[0-9]+)?(?:\s*$|[.:\-]|\s+\S)"
 )
 
+# Persian chapter headings: "فصل ۱", "فصل اول", "بخش ۲: مفاهیم",
+# "فصل بیست و یکم", "فصل سی و چهارمخداحافظ…" (PDF glue on long forms).
+# Labels are فصل / بخش. Digits may be ASCII, Persian (U+06F0–U+06F9), or
+# Arabic-Indic (U+0660–U+0669); int() parses all three. Word numerals use a
+# small ordinal map (1–34) with longest-prefix matching so compounds
+# ("بیست و یکم") and teens ("یازدهم") stay maintainable. Markdown "#" prefixes
+# are handled by `_chapter_number`'s second pass (Issue #91).
+#
+# Trailing rules (Persian has no letter case for a Latin-style `_HEADING_TAIL`):
+#   - digits: EOL / punctuation / spaced title (Korean-style);
+#   - short word ordinals 1–10: require a separator (space, punct, ZWNJ, or EOL)
+#     so "فصل اولویت‌ها" / "فصل اولیه" are not read as chapter 1;
+#   - teens and compounds: also allow a glued title letter — PDF extractors
+#     often drop the space, and a long ordinal is not a plausible word prefix.
+_FA_DIGITS = "۰-۹٠-٩"  # Persian then Arabic-Indic
+_FA_ONES = (
+    "اول", "دوم", "سوم", "چهارم", "پنجم", "ششم", "هفتم", "هشتم", "نهم", "دهم",
+)
+# Ones used after "بیست و" / "سی و" (یکم, not اول).
+_FA_COMPOUND_ONES = (
+    "یکم", "دوم", "سوم", "چهارم", "پنجم", "ششم", "هفتم", "هشتم", "نهم",
+)
+_FA_TEENS = (
+    "یازدهم", "دوازدهم", "سیزدهم", "چهاردهم", "پانزدهم",
+    "شانزدهم", "هفدهم", "هجدهم", "نوزدهم",
+)
+_FA_ONES_SET = frozenset(_FA_ONES)
+# After a short (1–10) word ordinal: end, whitespace, punctuation, or ZWNJ.
+_FA_SHORT_ORDINAL_TAIL = re.compile(r"^(?:$|\s|[.:\-—–：]|\u200c)")
+
+
+def _fa_ordinal_map() -> dict[str, int]:
+    """Persian chapter ordinals 1–34, including common spelling variants."""
+    m: dict[str, int] = {}
+    for i, w in enumerate(_FA_ONES, 1):
+        m[w] = i
+    for i, w in enumerate(_FA_TEENS, 11):
+        m[w] = i
+    m["هیجدهم"] = 18  # common alternate spelling of هجدهم
+    # Fused "بیستم" only — "بیست ام" / "بیست‌ام" are not common spellings
+    # (unlike "سی ام" / "سی‌ام" for 30), so they stay unmapped on purpose.
+    m["بیستم"] = 20
+    m["سی ام"] = 30
+    m["سی‌ام"] = 30  # ZWNJ spelling common in Persian typography
+    for i, w in enumerate(_FA_COMPOUND_ONES, 1):
+        m[f"بیست و {w}"] = 20 + i
+        m[f"سی و {w}"] = 30 + i
+    return m
+
+
+_FA_ORDINALS = _fa_ordinal_map()
+# Longest first so "چهاردهم" wins over "چهارم", "بیست و یکم" over nothing shorter.
+_FA_ORDINAL_KEYS = sorted(_FA_ORDINALS, key=len, reverse=True)
+_FA_LABEL_REST = re.compile(r"^\s*(?:فصل|بخش)\s+(.*)$")
+_FA_DIGIT_HEAD = re.compile(rf"^([0-9{_FA_DIGITS}]+)(.*)$")
+# Digit form: same idea as the Korean trailing guard (no Latin case to lean on).
+_FA_DIGIT_TAIL = re.compile(r"^(?:\s*$|[.:\-—–：]|\s+\S)")
+
+
+def _fa_chapter_number(s: str) -> int | None:
+    """Return a Persian chapter number (1–99 digits / 1–34 words) or None."""
+    m = _FA_LABEL_REST.match(s)
+    if not m:
+        return None
+    rest = m.group(1)
+    dm = _FA_DIGIT_HEAD.match(rest)
+    if dm:
+        n = int(dm.group(1))
+        if 1 <= n <= 99 and _FA_DIGIT_TAIL.match(dm.group(2)) is not None:
+            return n
+        return None
+    for key in _FA_ORDINAL_KEYS:
+        if not rest.startswith(key):
+            continue
+        tail = rest[len(key):]
+        # Short 1–10 ordinals need a separator; teens/compounds may be PDF-glued.
+        if key in _FA_ONES_SET and _FA_SHORT_ORDINAL_TAIL.match(tail) is None:
+            return None
+        return _FA_ORDINALS[key]
+    return None
+
+
 # Table-of-contents header lines across common languages. Anchored to a whole
 # line (^\s*X\s*$) so an inline "the contents of this chapter" never matches.
 _TOC_HEADERS = (
@@ -179,7 +317,7 @@ _TOC_HEADERS = (
 )
 _TOC_CJK_PATTERN = r"目[ \t\u3000]*(?:录|錄|次)"
 _TOC_PATTERN = re.compile(
-    r"^\s*(?:"
+    r"^\s*(?:#{1,6}\s*)?(?:"
     + "|".join([*(re.escape(h) for h in _TOC_HEADERS), _TOC_CJK_PATTERN])
     + r")\s*$",
     re.IGNORECASE | re.MULTILINE,
@@ -300,6 +438,13 @@ def _structural_chapter_count(text: str) -> int:
             and prev
             and not _SETEXT_UNDERLINE.match(prev)
             and len(s) >= len(prev)
+            # A title made only of punctuation is never a chapter. Two thematic
+            # breaks in a row ("***" over "---"), an ASCII box rule, a row of
+            # dots, or a table border sitting above an underline all reach this
+            # point. The ATX branch below already rejects them with the same
+            # test; the setext branch had no equivalent, so the identical string
+            # counted as a heading here and not there.
+            and re.search(r"\w", prev)
         ):
             depth = 1 if s[0] == "=" else 2
             levels.setdefault(depth, set()).add(prev.lower())
@@ -384,27 +529,61 @@ def _roman_to_int(s: str) -> int | None:
 
 def _match_chapter_number(line: str) -> int | None:
     """Return the chapter number if the line is a genuine chapter heading,
-    with no Markdown/AsciiDoc heading prefix (the caller strips it first)."""
-    s = line.strip()
+    with no Markdown/AsciiDoc heading prefix (the caller strips it first).
+    """
+    # Normalize Kangxi-radical numerals (⼀⼆⼋⼗) to ideographs so Chinese
+    # ebooks that encode chapter numbers in the U+2F00 block are detected.
+    s = line.strip().translate(_KANGXI_NUMERAL_TRANS)
+
     if len(s) > 80:
         return None
+
+    # Plain numbered chapter headings used by many technical books,
+    # e.g. "1  Introduction" or "12  Advanced Topics".
+    #
+    # Require at least two spaces after the chapter number. This avoids
+    # treating ordinary numbered list items such as "1. Item" as chapters.
+    plain = re.match(r"^([1-9]\d{0,2})\s{2,}\S", s)
+    if plain:
+        return int(plain.group(1))
+
     m = _EXPLICIT_CHAPTER.match(s)
     if m and _HEADING_TAIL.match(m.group("rest")):
         if m.group(1):
             return int(m.group(1))
         return _roman_to_int(m.group("roman").upper())
+
     rm = _ROMAN_HEAD.match(s) or _LC_MD_ROMAN.match(s)
     if rm:
         return _roman_to_int(rm.group(1))
+
     cm = _CN_CHAPTER.match(s) or _MD_CN_HEADING.match(s)
     if cm:
         return _cn_numeral_to_int(cm.group(1))
+
     tm = _TH_CHAPTER.match(s)
     if tm:
         return int(tm.group(1).translate(_TH_DIGIT_MAP))
+
+    hm = _HI_CHAPTER.match(s)
+    if hm:
+        return int(hm.group(1).translate(_HI_DIGIT_MAP))
+
+    bm = _BN_CHAPTER.match(s)
+    if bm:
+        return int(bm.group(1).translate(_BN_DIGIT_MAP))
+    rum = _RU_CHAPTER.match(s)
+    if rum:
+        return int(rum.group(1))
+
     km = _KO_CHAPTER.match(s)
     if km:
         return int(km.group(1))
+
+    fa = _fa_chapter_number(s)
+    if fa is not None:
+        return fa
+
     return None
 
 
@@ -414,9 +593,14 @@ def _chapter_number(line: str) -> int | None:
     Handles Arabic ("Chapter 5", "Capítulo 5: ..."), Roman-numeral
     ("I: Loomings", "## i. introduction", "II. The Carpet-Bag"),
     Chinese ("第三章 …", "## 一 · …", "## 第一讲"), Thai ("บทที่ 3",
-    "## บทที่ ๑"), and Korean ("제1장 총칙", "## 제4장 근로시간과 휴식")
-    heading styles — each optionally preceded by a Markdown/AsciiDoc heading
-    marker ("## Chapter 1" is a chapter heading just like "Chapter 1").
+    "## บทที่ ๑"), Hindi ("अध्याय 1", "अध्याय १", "## अध्याय 2"),
+    Bengali ("অধ্যায় 1", "অধ্যায় ১", "## অধ্যায় 2"),
+    Russian ("Глава 1", "ГЛАВА 12", "## Глава 2"),
+    Korean ("제1장 총칙", "## 제4장 근로시간과 휴식"), and
+    Persian ("فصل ۱", "فصل اول", "فصل بیست و یکم", "بخش ۲: مفاهیم",
+    "## فصل ۱: مقدمه", PDF-glued "فصل سی و چهارمخداحافظ…") heading styles — each
+    optionally preceded by a Markdown/AsciiDoc heading marker
+    ("## Chapter 1" is a chapter heading just like "Chapter 1").
     """
     match = _match_chapter_number(line)
     if match is not None:
@@ -461,12 +645,21 @@ def detect_structure(text: str) -> dict:
     # Every parser in this project already announces which method it used
     # ("Trying python-docx... OK"); this decision had the same shape and was
     # the only silent one.
-    if numeric_count > 0:
+    if numeric_count >= 2:
         chapters_detected = numeric_count
         chapters_method = "numeric"
     else:
-        chapters_detected = _structural_chapter_count(text)
-        chapters_method = "structural" if chapters_detected else "none"
+        # A single stray number (e.g. a Roman numeral inside an example paper
+        # reproduced in the book, or a lone "Part 1") is not enough to suppress
+        # the structural (Markdown/AsciiDoc) heading count, so course-style
+        # books with "### Unit N" headings still get counted via max().
+        structural_count = _structural_chapter_count(text)
+        chapters_detected = max(numeric_count, structural_count)
+        chapters_method = (
+            "structural" if structural_count > numeric_count
+            else "numeric" if numeric_count
+            else "none"
+        )
 
     # Look for ToC indicators in the first ~30k chars (multilingual; see _TOC_PATTERN)
     has_toc = bool(_TOC_PATTERN.search(text[:30000]))
@@ -534,7 +727,9 @@ def resolve_input_files(paths: list[str]) -> list[Path]:
         # the file/directory branch below see a real path.
         path_str = os.path.expanduser(raw_path)
         # Check if it has glob wildcards
-        if any(char in path_str for char in ("*", "?", "[")):
+        if not Path(path_str).exists() and any(
+            char in path_str for char in ("*", "?", "[")
+        ):
             glob_matches = glob.glob(path_str, recursive=True)
             # Sort expanded glob results deterministically
             expanded = []
@@ -635,6 +830,7 @@ def extract_single_file(input_path: Path, extraction_mode: str, install_mode: st
     method = ""
     pages = 0
     pages_label = "sections"
+    images_dropped = None
     
     if ext == ".epub":
         print(f"Extracting EPUB: {input_str}")
@@ -657,6 +853,13 @@ def extract_single_file(input_path: Path, extraction_mode: str, install_mode: st
                 )
         pages = count_epub_chapters(input_str)
         pages_label = "spine_items"
+        images_dropped = count_epub_images(input_str)
+        if images_dropped > _EPUB_IMAGE_NOTICE_THRESHOLD:
+            print(
+                f"  [warn] {input_path.name} contains {images_dropped} image(s); "
+                "their content is not extracted",
+                file=sys.stderr,
+            )
     elif ext == ".pdf":
         print(f"Extracting PDF: {input_str}")
         if looks_image_only(input_str):
@@ -781,6 +984,7 @@ def extract_single_file(input_path: Path, extraction_mode: str, install_mode: st
         "chars": len(text),
         "words": len(text.split()),
         "estimated_tokens": tokens,
+        "images_dropped": images_dropped,
         "text": text,
         **structure,
     }
@@ -922,6 +1126,9 @@ def main():
     total_chars = len(consolidated_text)
     total_words = len(consolidated_text.split())
     total_tokens = estimate_tokens(consolidated_text)
+    total_images_dropped = sum(
+        src["images_dropped"] or 0 for src in extracted_sources
+    )
     
     # Detect structure from source content only. The generated SOURCE banners in
     # full_text.txt use rows of "=", which can otherwise become phantom setext
@@ -951,6 +1158,10 @@ def main():
         "words": total_words,
         "estimated_tokens": total_tokens,
         "estimated_tokens_human": f"~{total_tokens // 1000}K",
+        "images_dropped": total_images_dropped,
+        # Self-describing so a consumer can clean up exactly the directory this
+        # run created, without having to reconstruct the per-run default path.
+        "workdir": str(OUTPUT_DIR),
         "output_text": str(OUTPUT_TEXT),
         "total_sources": len(extracted_sources),
         "sources": [
@@ -965,6 +1176,7 @@ def main():
                 "chars": src["chars"],
                 "words": src["words"],
                 "estimated_tokens": src["estimated_tokens"],
+                "images_dropped": src["images_dropped"],
                 "chapters_detected": src["chapters_detected"],
                 "chapters_method": src["chapters_method"],
                 "has_toc": src["has_toc"]
@@ -1011,8 +1223,9 @@ def main():
             "   WARN    : No table of contents detected — chapter mapping in Step 3 "
             "will rely on heading scan only, which may miss or duplicate sections."
         )
-    print(f"\n   Text -> {OUTPUT_TEXT}")
-    print(f"   Meta -> {OUTPUT_META}")
+    print(f"\n   Workdir -> {OUTPUT_DIR}")
+    print(f"   Text    -> {OUTPUT_TEXT}")
+    print(f"   Meta    -> {OUTPUT_META}")
     if errors:
         print(f"\n   WARNING: {len(errors)} source(s) skipped due to errors:")
         for path, err in errors:

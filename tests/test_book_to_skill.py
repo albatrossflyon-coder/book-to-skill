@@ -627,6 +627,68 @@ class TestDetectStructure:
         assert _chapter_number("บทความนี้ยาวมากและมีรายละเอียดเยอะ") is None
         assert _chapter_number("ตอนนี้เรามาดูกันว่าเกิดอะไรขึ้น") is None
 
+    # ── Hindi (Devanagari) chapter headings ────────────────────────────────
+    def test_detects_hindi_chapters(self):
+        """Hindi headings: `अध्याय N`, with Devanagari or Arabic digits."""
+        text = (
+            "अध्याय १ प्रस्तावना\nसामग्री\n"
+            "अध्याय २ विधियाँ\nसामग्री\n"
+            "अध्याय 3 परिणाम\nसामग्री"
+        )
+        assert detect_structure(text)["chapters_detected"] == 3
+
+    def test_hindi_markdown_prefix(self):
+        text = "## अध्याय १ पहला\nसामग्री\n## अध्याय २ दूसरा\nसामग्री"
+        assert detect_structure(text)["chapters_detected"] == 2
+
+    def test_hindi_prose_is_not_a_chapter_heading(self):
+        """`अध्याय` used in prose (no number, or not at the start) is not a heading."""
+        from book_to_skill.utils import _chapter_number
+
+        assert _chapter_number("इस अध्याय में हम चर्चा करेंगे") is None
+        assert _chapter_number("अध्याय") is None
+
+    def test_detects_bengali_chapters(self):
+        """Bengali headings: `অধ্যায় N`, with Bengali or Arabic digits."""
+        text = (
+            "অধ্যায় ১ ভূমিকা\nবিষয়বস্তু\n"
+            "অধ্যায় ২ পদ্ধতি\nবিষয়বস্তু\n"
+            "অধ্যায় 3 ফলাফল\nবিষয়বস্তু"
+        )
+        assert detect_structure(text)["chapters_detected"] == 3
+
+    def test_bengali_markdown_prefix(self):
+        text = "## অধ্যায় ১ প্রথম\nবিষয়বস্তু\n## অধ্যায় ২ দ্বিতীয়\nবিষয়বস্তু"
+        assert detect_structure(text)["chapters_detected"] == 2
+
+    def test_bengali_prose_is_not_a_chapter_heading(self):
+        """`অধ্যায়` used in prose (no number, or not at the start) is not a heading."""
+        from book_to_skill.utils import _chapter_number
+
+        assert _chapter_number("এই অধ্যায়ে আমরা আলোচনা করব") is None
+        assert _chapter_number("অধ্যায়") is None
+
+    def test_detects_russian_chapters(self):
+        """Russian headings: `Глава N`, case-insensitive, with Arabic digits."""
+        text = (
+            "Глава 1 Введение\nсодержание\n"
+            "ГЛАВА 2 Методы\nсодержание\n"
+            "Глава 3 Результаты\nсодержание"
+        )
+        assert detect_structure(text)["chapters_detected"] == 3
+
+    def test_russian_markdown_prefix(self):
+        text = "## Глава 1 Первая\nсодержание\n## Глава 2 Вторая\nсодержание"
+        assert detect_structure(text)["chapters_detected"] == 2
+
+    def test_russian_prose_is_not_a_chapter_heading(self):
+        """An inflected form or a different word (Главная) is not a heading."""
+        from book_to_skill.utils import _chapter_number
+
+        assert _chapter_number("В этой главе мы обсудим") is None
+        assert _chapter_number("Главная страница") is None
+        assert _chapter_number("Глава") is None
+
     # ── Korean chapter headings ────────────────────────────────────────────
 
     def test_korean_je_n_jang(self):
@@ -672,6 +734,145 @@ class TestDetectStructure:
         text = "제1편 총칙\n내용\n제2장 정의\n내용\n제3절 통칙\n내용"
         assert detect_structure(text)["chapters_detected"] == 3
 
+    # ── Persian chapter headings ───────────────────────────────────────────
+
+    # Canonical ordinals 1–34 used by the FA word-numeral map (integration fixture).
+    _FA_ORDINAL_1_TO_34 = (
+        "اول", "دوم", "سوم", "چهارم", "پنجم", "ششم", "هفتم", "هشتم", "نهم", "دهم",
+        "یازدهم", "دوازدهم", "سیزدهم", "چهاردهم", "پانزدهم", "شانزدهم", "هفدهم",
+        "هجدهم", "نوزدهم", "بیستم",
+        "بیست و یکم", "بیست و دوم", "بیست و سوم", "بیست و چهارم", "بیست و پنجم",
+        "بیست و ششم", "بیست و هفتم", "بیست و هشتم", "بیست و نهم", "سی ام",
+        "سی و یکم", "سی و دوم", "سی و سوم", "سی و چهارم",
+    )
+
+    def test_persian_digit_scripts(self):
+        """`فصل N` with Persian, Arabic-Indic, and ASCII digits."""
+        from book_to_skill.utils import _chapter_number
+
+        assert _chapter_number("فصل ۱") == 1
+        assert _chapter_number("فصل ١") == 1
+        assert _chapter_number("فصل 1") == 1
+        assert _chapter_number("فصل ۱۰") == 10
+        assert _chapter_number("فصل ١٠") == 10
+        assert _chapter_number("فصل 10") == 10
+        assert _chapter_number("فصل ۳۴") == 34
+
+    def test_persian_word_numerals_1_to_34(self):
+        """Word ordinals `اول` … `سی و چهارم` map to integers 1–34."""
+        from book_to_skill.utils import _chapter_number
+
+        for n, word in enumerate(self._FA_ORDINAL_1_TO_34, 1):
+            assert _chapter_number(f"فصل {word}") == n, word
+        # Common ZWNJ spelling of 30.
+        assert _chapter_number("فصل سی‌ام") == 30
+
+    def test_persian_compound_word_numerals(self):
+        """Explicit compound forms used in longer Persian books."""
+        from book_to_skill.utils import _chapter_number
+
+        assert _chapter_number("فصل بیست و یکم") == 21
+        assert _chapter_number("فصل بیست و نهم") == 29
+        assert _chapter_number("فصل سی و یکم") == 31
+        assert _chapter_number("فصل سی و چهارم") == 34
+
+    def test_persian_hejdahom_spelling_variants(self):
+        """Both common spellings of 18: هجدهم and هیجدهم."""
+        from book_to_skill.utils import _chapter_number
+
+        assert _chapter_number("فصل هجدهم") == 18
+        assert _chapter_number("فصل هجدهم: یک جاسوس") == 18
+        assert _chapter_number("فصل هیجدهم") == 18
+        assert _chapter_number("فصل هیجدهم: یک جاسوس") == 18
+
+    def test_persian_bakhsh_section(self):
+        """`بخش` (section/part) is accepted with digits or word numerals."""
+        from book_to_skill.utils import _chapter_number
+
+        assert _chapter_number("بخش ۲") == 2
+        assert _chapter_number("بخش ٢") == 2
+        assert _chapter_number("بخش 2") == 2
+        assert _chapter_number("بخش دوم") == 2
+        assert _chapter_number("بخش سی و چهارم") == 34
+
+    def test_persian_titled_headings(self):
+        """Punctuation / dash / spaced titles after the numeral are headings."""
+        from book_to_skill.utils import _chapter_number
+
+        assert _chapter_number("فصل ۱: مقدمه") == 1
+        assert _chapter_number("فصل اول — مبانی برنامه‌نویسی") == 1
+        assert _chapter_number("فصل ۲. اصول") == 2
+        assert _chapter_number("بخش ۳: مفاهیم") == 3
+        assert _chapter_number("فصل بیست و یکم پایان سفر") == 21
+
+    def test_persian_markdown_prefix(self):
+        """Markdown heading prefixes are stripped by `_chapter_number`."""
+        from book_to_skill.utils import _chapter_number
+
+        assert _chapter_number("## فصل ۱: مقدمه") == 1
+        assert _chapter_number("### فصل دوم") == 2
+        assert _chapter_number("### فصل سی و چهارم خداحافظ فرانسه") == 34
+
+    def test_persian_pdf_glued_title(self):
+        """PDF glue is allowed after teens/compounds, not after short 1–10 ordinals.
+
+        Short ordinals are plausible prefixes of ordinary Persian words
+        ("اولویت‌ها", "اولیه", "دومینو"), so they require a separator. Longer
+        forms are not, and extractors do drop the space after them.
+        """
+        from book_to_skill.utils import _chapter_number
+
+        assert _chapter_number("فصل سی و چهارمخداحافظ، فرانسه") == 34
+        assert _chapter_number("فصل بیست و یکمپایان سفر") == 21
+        assert _chapter_number("فصل هجدهمیک جاسوس") == 18
+        assert _chapter_number("فصل هیجدهمیک جاسوس") == 18
+        # Short 1–10 glued titles are rejected (see false-positive test below).
+        assert _chapter_number("فصل اولجایی که به نظر میرسید...") is None
+        assert _chapter_number("فصل دومشهادت یک جنایتکار علیه خودش") is None
+        assert _chapter_number("فصل سومعدالت") is None
+
+    def test_persian_short_ordinal_false_positives(self):
+        """Ordinary phrases that begin with a short ordinal must not be chapters."""
+        from book_to_skill.utils import _chapter_number
+
+        assert _chapter_number("فصل اولویت‌ها") is None
+        assert _chapter_number("فصل اولیه") is None
+        assert _chapter_number("فصل دومینو") is None
+        assert _chapter_number("فصل سومین") is None
+
+    def test_persian_prose_is_not_a_chapter_heading(self):
+        """Inline / incomplete `فصل` references must not count as headings."""
+        from book_to_skill.utils import _chapter_number
+
+        assert _chapter_number("در فصل ۲ این موضوع را بررسی می‌کنیم") is None
+        assert _chapter_number("در فصل دوم این موضوع را بررسی می‌کنیم") is None
+        assert _chapter_number("این فصل اول یک توضیح است") is None
+        assert _chapter_number("فصل") is None
+        assert _chapter_number("بخش") is None
+        # Incomplete compounds are not headings.
+        assert _chapter_number("فصل بیست") is None
+        assert _chapter_number("فصل سی و") is None
+        # Existing hard length guard in `_match_chapter_number`.
+        assert _chapter_number("فصل ۱: " + ("الف" * 40)) is None
+
+    def test_detects_persian_chapters(self):
+        """Plain-text Persian headings are numeric chapters, not MD fallback."""
+        text = "فصل ۱\nمحتوا\nفصل ۲\nمحتوا\nفصل ۳\nمحتوا"
+        result = detect_structure(text)
+        assert result["chapters_detected"] == 3
+        # Non-empty sample proves the numeric path, not structural Markdown.
+        assert result["chapter_headings_sample"] == ["فصل ۱", "فصل ۲", "فصل ۳"]
+
+    def test_detects_persian_word_chapters_1_to_34(self):
+        """All 34 word-numeral headings count as distinct numeric chapters."""
+        text = "\n".join(
+            f"فصل {word}\nمحتوا فصل {n}."
+            for n, word in enumerate(self._FA_ORDINAL_1_TO_34, 1)
+        )
+        result = detect_structure(text)
+        assert result["chapters_detected"] == 34
+        assert result["chapter_headings_sample"]  # numeric path, not MD fallback
+        assert result["chapter_headings_sample"][0] == "فصل اول"
 
     def test_roman_footnote_reference_is_not_a_chapter(self):
         """Scholarly cross-references must stay rejected after the Roman change."""
@@ -731,6 +932,52 @@ class TestDetectStructure:
         text = "The contents of this chapter are varied and the index is long.\n"
         assert detect_structure(text)["has_toc"] is False
 
+    def test_toc_markdown_atx_heading(self):
+        # issue #126: a Markdown export writes the ToC as "## Table of Contents"
+        text = """## Table of Contents
+1. Intro
+2. Body
+"""
+        assert detect_structure(text)["has_toc"] is True
+
+    def test_toc_markdown_headers_other_languages(self):
+        text = """## 目录
+第一章 开始
+第二章 进阶
+"""
+        assert detect_structure(text)["has_toc"] is True
+
+    def test_unit_style_chapter_headings(self):
+        # course-style books: "### Unit 1 ✏ ..." must be detected as chapters
+        text = """### Unit 1 ✏ How to Write an Introduction
+body
+### Unit 2 ✏ Writing about Methodology
+body
+"""
+        assert detect_structure(text)["chapters_detected"] >= 2
+
+    def test_stray_roman_numeral_does_not_suppress_structural_count(self):
+        # a single Roman numeral inside a reproduced example paper must not
+        # outvote the structural heading count of the surrounding book
+        text = """### Introduction
+VIII. CONCLUSIONS
+### Methodology
+"""
+        result = detect_structure(text)
+        assert result["chapters_detected"] >= 2
+        assert result["chapters_method"] == "structural"
+
+    def test_unit_style_headings_count_as_numeric(self):
+        # "Unit N" headings are explicit chapters once the markdown prefix is
+        # stripped, so they take the numeric branch
+        text = """### Unit 1 ✏ How to Write an Introduction
+VIII. CONCLUSIONS
+### Unit 2 ✏ Writing about Methodology
+"""
+        result = detect_structure(text)
+        assert result["chapters_detected"] >= 2
+        assert result["chapters_method"] == "numeric" 
+
     def test_numbered_list_items_are_not_chapters(self):
         # The AI-Engineering failure: numbered list items were counted as chapters.
         text = (
@@ -758,6 +1005,24 @@ class TestDetectStructure:
     def test_portuguese_capitulo(self):
         text = "Capítulo 1\nalgum texto\nCapítulo 2\nmais texto\n"
         assert detect_structure(text)["chapters_detected"] == 2
+
+    def test_detects_plain_numbered_chapter_headings(self):
+        """Plain numbered headings such as '1  Introduction' are chapters."""
+        text = (
+            "1  Introdução e Visão Geral\n"
+            "Texto do capítulo.\n"
+            "2  Princípios Fundamentais\n"
+            "Texto do capítulo.\n"
+            "3  Produtos de Trabalho\n"
+            "Texto do capítulo.\n"
+            "4  Práticas para Elaboração\n"
+            "Texto do capítulo.\n"
+        )
+
+        result = detect_structure(text)
+
+        assert result["chapters_detected"] == 4
+        assert result["chapters_method"] == "numeric"
 
     def test_distinct_numbering_dedups_toc_and_body(self):
         # A ToC heading and the body heading for the same chapter count once.
@@ -871,6 +1136,33 @@ class TestDetectStructure:
         assert _cn_numeral_to_int("不是数字") is None
         assert _cn_numeral_to_int("9999") is None  # out of 1..999 chapter range
 
+    # ── Kangxi-radical numerals (U+2F00 block) ──────────────────────────────
+    # Some Chinese ebooks (e.g. certain e-reader platforms) encode numerals as
+    # Kangxi radicals instead of CJK ideographs: 第⼀章 with U+2F00, not U+4E00.
+    # NFKC does not map these, so detection must normalize them explicitly.
+
+    def test_kangxi_radical_chapter_headings(self):
+        text = (
+            "第⼀章\n正文\n"      # U+2F00 KANGXI RADICAL ONE
+            "第⼆章\n正文\n"      # U+2F06 KANGXI RADICAL TWO
+            "第⼋章\n正文\n"      # U+2F0B KANGXI RADICAL EIGHT
+            "第⼗章\n正文\n"      # U+2F17 KANGXI RADICAL TEN
+            "第⼗⼀章\n正文\n"    # ⼗⼀ = 11
+            "第⼗⼆章\n正文\n"    # ⼗⼆ = 12
+        )
+        assert detect_structure(text)["chapters_detected"] == 6
+
+    def test_kangxi_mixed_with_ideograph_chapters(self):
+        # Real-world mix from an actual ebook: radicals for 一/二/八/十,
+        # ideographs for the rest — all 12 chapters must be found.
+        nums = ["⼀", "⼆", "三", "四", "五", "六", "七", "⼋", "九", "⼗", "⼗⼀", "⼗⼆"]
+        text = "".join(f"第{n}章\n正文。\n" for n in nums)
+        assert detect_structure(text)["chapters_detected"] == 12
+
+    def test_kangxi_radical_in_markdown_heading(self):
+        text = "## 第⼀讲\n正文\n## 第⼆讲\n正文\n"
+        assert detect_structure(text)["chapters_detected"] == 2
+
     def test_french_chapitre(self):
         assert detect_structure("Chapitre 1\nx\nChapitre 2\nx")["chapters_detected"] == 2
 
@@ -882,6 +1174,16 @@ class TestDetectStructure:
 
     def test_dutch_hoofdstuk(self):
         assert detect_structure("Hoofdstuk 1\nx\nHoofdstuk 2\nx")["chapters_detected"] == 2
+
+    def test_vietnamese_chuong(self):
+        assert detect_structure("Chương 1\nx\nChương 2\nx")["chapters_detected"] == 2
+
+    def test_vietnamese_chuong_not_program(self):
+        # "Chương trình" (program) starts with the chapter word but is not a
+        # heading — no number follows "Chương", so it must not match.
+        from book_to_skill.utils import _chapter_number
+
+        assert _chapter_number("Chương trình 1 của khóa học") is None
 
     def test_german_kapitel_with_title(self):
         text = "Kapitel 1: Einführung\nx\nKapitel 2: Methoden\nx"
@@ -1205,6 +1507,13 @@ class TestDocxExtraction:
 
 class TestResolveInputFiles:
     """Additional edge-case tests for resolve_input_files."""
+
+    def test_existing_file_with_glob_metacharacters_is_literal(self, tmp_path):
+        target = _make_text_file(tmp_path / "book [2013].pdf")
+
+        result = resolve_input_files([str(target)])
+
+        assert result == [target.resolve()]
 
     def test_nonexistent_file_kept_for_error_reporting(self, tmp_path):
         """A nonexistent explicit path is kept so extract_single_file can report it."""
@@ -1603,7 +1912,7 @@ class TestTextEncodingDetection:
 class TestPdftotextEncoding:
     """pdftotext output (UTF-8) is decoded as UTF-8, not the locale encoding."""
 
-    def test_pdftotext_decodes_as_utf8(self, monkeypatch):
+    def test_pdftotext_requests_utf8_output(self, monkeypatch):
         captured = {}
 
         class _Result:
@@ -1613,6 +1922,7 @@ class TestPdftotextEncoding:
         monkeypatch.setattr(pdf_parser.shutil, "which", lambda name: "/usr/bin/pdftotext")
 
         def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
             captured.update(kwargs)
             return _Result()
 
@@ -1621,7 +1931,33 @@ class TestPdftotextEncoding:
         assert pdf_parser.extract_with_pdftotext("x.pdf") == "Café — naïve"
         assert captured.get("encoding") == "utf-8"
         assert captured.get("errors") == "replace"
+        cmd = captured.get("cmd") or []
+        assert "-enc" in cmd and cmd[cmd.index("-enc") + 1] == "UTF-8"
 
+
+class TestPdfPageCount:
+    """Tests for PDF page-count fallback behavior."""
+
+    def test_count_pages_uses_pdfminer_when_pdfinfo_and_pypdf_are_unavailable(
+        self, monkeypatch
+    ):
+        """Use pdfminer as the final fallback when other page counters are unavailable."""
+        fake_pdf = "fake.pdf"
+
+        monkeypatch.setattr(pdf_parser.shutil, "which", lambda _: None)
+
+        high_level = mock.MagicMock()
+        high_level.extract_text.return_value = (
+            "page one\fpage two\fpage three"
+        )
+
+        pdfminer = mock.MagicMock()
+        pdfminer.high_level = high_level
+
+        monkeypatch.setitem(sys.modules, "pdfminer", pdfminer)
+        monkeypatch.setitem(sys.modules, "pdfminer.high_level", high_level)
+
+        assert pdf_parser.count_pages(fake_pdf) == 3
 
 class TestLooksImageOnly:
     """Scanned PDFs are caught by probing the first pages, before the chain runs."""
@@ -1855,6 +2191,12 @@ class TestCjkTokenEstimate:
 
     def test_empty_is_zero(self):
         assert estimate_tokens("") == 0
+
+    def test_kangxi_radicals_counted_as_cjk(self):
+        # Some Chinese ebooks render Han characters as Kangxi radicals
+        # throughout (网 as ⽹ U+2F79, 大 as ⼤ U+2F24, 一 as ⼀ U+2F00).
+        # A space-less run of them must not fall into the word branch.
+        assert estimate_tokens("⼀" * 1500) == 1000
 
 
 class TestPdfLibsCleanup:

@@ -79,7 +79,7 @@ def extract_with_pdftotext(pdf_path: str) -> str | None:
     try:
         pdf_path = os.path.abspath(pdf_path)
         result = subprocess.run(
-            ["pdftotext", "-layout", pdf_path, "-"],
+            ["pdftotext", "-layout", "-enc", "UTF-8", pdf_path, "-"],
             capture_output=True, text=True, timeout=120,
             encoding="utf-8", errors="replace",
         )
@@ -100,7 +100,7 @@ def looks_image_only(pdf_path: str, pages: int = 5) -> bool:
         return False
     try:
         result = subprocess.run(
-            ["pdftotext", "-f", "1", "-l", str(pages), os.path.abspath(pdf_path), "-"],
+            ["pdftotext", "-f", "1", "-l", str(pages), "-enc", "UTF-8", os.path.abspath(pdf_path), "-"],
             capture_output=True, text=True, timeout=30,
             encoding="utf-8", errors="replace",
         )
@@ -169,22 +169,43 @@ def extract_with_docling(pdf_path: str) -> str | None:
 
 
 def count_pages(pdf_path: str) -> int:
-    # Try pdfinfo first
+    """Return the number of pages in a PDF using progressively safer fallbacks."""
+    # Try pdfinfo first.
     if shutil.which("pdfinfo"):
         try:
             pdf_path = os.path.abspath(pdf_path)
             result = subprocess.run(
-                ["pdfinfo", pdf_path], capture_output=True, text=True, timeout=15
+                ["pdfinfo", pdf_path],
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
             for line in result.stdout.splitlines():
                 if line.startswith("Pages:"):
                     return int(line.split(":")[1].strip())
         except Exception:
             pass
-    # Fallback: count pages with pypdf
+
+    # Fallback: count pages with pypdf.
     try:
         import pypdf
+
         with open(pdf_path, "rb") as f:
             return len(pypdf.PdfReader(f).pages)
     except Exception:
-        return 0
+        pass
+
+    # Final fallback: pdfminer.extract_text() preserves page boundaries
+    # using form-feed characters, so the number of pages can be derived
+    # without requiring a separate PDF page-counting dependency.
+    try:
+        from pdfminer.high_level import extract_text
+
+        text = extract_text(pdf_path)
+        if text:
+            return text.count("\f") + (0 if text.endswith("\f") else 1)
+    except Exception:
+        # All page-counting methods are best-effort; preserve the historical 0 result.
+        pass
+
+    return 0

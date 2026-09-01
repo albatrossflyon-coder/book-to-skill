@@ -86,15 +86,52 @@ class _HTMLTextExtractor(html.parser.HTMLParser):
 
 
 def extract_html_content(raw_html: str) -> str:
+    # Prints mirror extract_docx()'s "Trying X..." style so a run
+    # says which of the three extractors actually answered, instead of
+    # silently returning one of two materially different documents (the
+    # trafilatura result strips page chrome the bs4/stdlib paths don't).
+    print("Trying trafilatura...", end=" ", flush=True)
+    try:
+        import trafilatura
+    except ImportError:
+        trafilatura = None
+
+    if trafilatura is not None:
+        # trafilatura does real main-content/boilerplate detection (nav, footer,
+        # ads, cookie banners) -- neither the bs4 path below nor the stdlib
+        # fallback attempt this, they only strip script/style/head. Falls
+        # through to bs4 on a missing dependency, a page trafilatura can't
+        # confidently extract from (e.g. very short pages -- returns None or
+        # whitespace, not always an exception), and on any parse failure
+        # (e.g. malformed HTML raising inside trafilatura itself), rather than
+        # propagating an exception or returning a silently empty result.
+        try:
+            extracted = trafilatura.extract(
+                raw_html, include_tables=True, include_formatting=False
+            )
+        except Exception:
+            extracted = None
+        if extracted and extracted.strip():
+            print("OK")
+            return extracted
+        print("no confident extraction, falling back")
+    else:
+        print("not available")
+
+    print("Trying BeautifulSoup (bs4)...", end=" ", flush=True)
     try:
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(raw_html, "html.parser")
         for element in soup(["script", "style", "head"]):
             element.decompose()
+        print("OK")
         return soup.get_text(separator="\n")
     except ImportError:
+        print("not available")
+        print("Trying stdlib HTML parser...", end=" ", flush=True)
         parser = _HTMLTextExtractor()
         parser.feed(raw_html)
+        print("OK")
         return parser.get_text()
 
 
